@@ -75,7 +75,6 @@ Requirements:
 7. NEVER use in your answer ""
 """
 
-# Константы для ретраев
 MAX_GENERATION_ATTEMPTS = 5
 NETWORK_RETRY_ATTEMPTS = 12
 BASE_NETWORK_DELAY = 10
@@ -96,7 +95,7 @@ client = tweepy.Client(
 )
 
 def load_model():
-    logger.info("Загрузка модели с Hugging Face Hub...")
+    logger.info("Download model from Hugging Face Hub...")
     start_time = time.time()
     
     model_path = hf_hub_download(
@@ -107,7 +106,7 @@ def load_model():
         resume_download=True
     )
     
-    logger.info(f"Модель загружена за {time.time() - start_time:.2f} сек")
+    logger.info(f"Model was loaded for {time.time() - start_time:.2f} sec")
     
     return Llama(
         model_path=model_path,
@@ -168,16 +167,16 @@ def generate_tweet(llm) -> str:
             )
 
             if valid:
-                logger.debug(f"Успешная проверка на {attempt+1} попытке")
+                logger.debug(f"Success check on {attempt+1} try")
                 return tweet
             
         except Exception as e:
-            logger.error(f"Ошибка генерации (попытка {attempt+1}): {str(e)}")
-            time.sleep(2 ** attempt)  # Экспоненциальная задержка
+            logger.error(f"Error generate (try {attempt+1}): {str(e)}")
+            time.sleep(2 ** attempt)
         
-        logger.warning(f"Попытка {attempt+1}: низкое качество твита. Регенерация...")
+        logger.warning(f"Try {attempt+1}: low quality post. Regenerate...")
     
-    logger.error("Не удалось сгенерировать валидный твит")
+    logger.error("Cant generate valid post")
     return ""
 
 def filter_tweet(tweet: str) -> str:
@@ -200,12 +199,12 @@ def filter_tweet(tweet: str) -> str:
 def post_tweet(llm):
     tweet = generate_tweet(llm)
     if not tweet:
-        logger.error("Не удалось сгенерировать твит")
+        logger.error("Can't generate post")
         return False
     
     filtered_tweet = filter_tweet(tweet)
     if not filtered_tweet:
-        logger.error("Твит пуст после фильтрации")
+        logger.error("Post empty after filtration")
         return False
     
     attempt = 0
@@ -217,13 +216,13 @@ def post_tweet(llm):
                 error_msg = response.errors[0]['detail']
                 
                 if any(code in error_msg for code in ["429", "Too Many Requests"]):
-                    logger.warning("Лимит запросов Twitter")
+                    logger.warning("x.com limit")
                     raise tweepy.TweepyException("Rate limit exceeded")
                 else:
-                    logger.error(f"Ошибка API: {error_msg}")
+                    logger.error(f"API error: {error_msg}")
                     raise tweepy.TweepyException(error_msg)
                 
-            logger.info(f"Опубликован твит: {filtered_tweet}")
+            logger.info(f"Successed post: {filtered_tweet}")
             return True
             
         except tweepy.TweepyException as e:
@@ -232,25 +231,25 @@ def post_tweet(llm):
             is_server_error = any(x in error_msg for x in ["500", "502", "503", "504"])
             
             if not (is_rate_limit or is_server_error):
-                logger.error(f"Критическая ошибка API: {error_msg}")
+                logger.error(f"API critical error: {error_msg}")
                 return False
                 
             delay = BASE_NETWORK_DELAY * (2 ** attempt) + random.uniform(0, 15)
-            logger.warning(f"Повторная попытка через {delay:.1f} сек. | Ошибка: {error_msg}")
+            logger.warning(f"Another try after {delay:.1f} sec. | Error: {error_msg}")
             time.sleep(delay)
             attempt += 1
             
         except (OSError, TimeoutError, ConnectionError) as e:
             delay = BASE_NETWORK_DELAY * (2 ** attempt)
-            logger.warning(f"Сетевая ошибка: {type(e).__name__} - {str(e)}. Повтор через {delay:.1f} сек.")
+            logger.warning(f"Network error: {type(e).__name__} - {str(e)}. Next try after {delay:.1f} sec.")
             time.sleep(delay)
             attempt += 1
             
         except Exception as e:
-            logger.error(f"Неожиданная ошибка: {type(e).__name__} - {str(e)}")
+            logger.error(f"Unexpected error: {type(e).__name__} - {str(e)}")
             return False
     
-    logger.error(f"Не удалось опубликовать твит после {NETWORK_RETRY_ATTEMPTS} попыток")
+    logger.error(f"Can't post tweet after {NETWORK_RETRY_ATTEMPTS} try")
     return False
 
 def schedule_tweets(llm):
@@ -262,11 +261,11 @@ def schedule_tweets(llm):
         lambda: post_tweet(llm),
         'interval',
         hours=interval_hours,
-        jitter=1200  # Вариация 20 минут
+        jitter=1200
     )
     
     scheduler.start()
-    logger.info(f"Публикация твитов каждые {interval_hours:.1f} часов")
+    logger.info(f"Post in x.com every {interval_hours:.1f} hours")
     return scheduler
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -282,60 +281,59 @@ class HealthHandler(BaseHTTPRequestHandler):
 def run_http_server():
     port = int(os.getenv("PORT", 7860))
     server = HTTPServer(("", port), HealthHandler)
-    logger.info(f"HTTP сервер запущен на порту {port}")
+    logger.info(f"HTTP server starts on port {port}")
     server.serve_forever()
 
 def main() -> None:
-    logger.info("Запуск Twitter бота...")
+    logger.info("Launching x.com bot...")
 
     http_thread = threading.Thread(target=run_http_server, daemon=True)
     http_thread.start()
     
-    # Загрузка модели с ретраями
     llm = None
     for i in range(MODEL_LOAD_RETRIES):
         try:
             llm = load_model()
             break
         except Exception as e:
-            logger.error(f"Ошибка загрузки модели (попытка {i+1}/{MODEL_LOAD_RETRIES}): {str(e)}")
+            logger.error(f"Load model error (try {i+1}/{MODEL_LOAD_RETRIES}): {str(e)}")
             if i < MODEL_LOAD_RETRIES - 1:
                 wait = 15 * (i + 1)
-                logger.info(f"Повтор через {wait} сек.")
+                logger.info(f"Next try after {wait} sec.")
                 time.sleep(wait)
     else:
-        logger.critical("Не удалось загрузить модель после нескольких попыток")
+        logger.critical("Unable to load model after multiple attempts")
         return
     
     try:
         user = client.get_me()
         if user.errors:
-            logger.error("Ошибка аутентификации: %s", user.errors[0]['detail'])
+            logger.error("Authentication error: %s", user.errors[0]['detail'])
             return
-        logger.info("Аутентификация успешна. Пользователь: @%s", user.data.username)
+        logger.info("Success auth. User: @%s", user.data.username)
     except tweepy.TweepyException as e:
-        logger.error("Ошибка подключения к API: %s", str(e))
+        logger.error("API connection error: %s", str(e))
         return
     except Exception as e:
-        logger.error(f"Неожиданная ошибка аутентификации: {type(e).__name__} - {str(e)}")
+        logger.error(f"Unexpected auth error: {type(e).__name__} - {str(e)}")
         return
 
-    logger.info("Генерация тестового твита...")
+    logger.info("Test post generation start...")
     if post_tweet(llm):
-        logger.info("Первый твит успешно опубликован!")
+        logger.info("The first tweet was successfully published!")
     else:
-        logger.error("Не удалось опубликовать первый твит")
+        logger.error("Failed to publish first tweet")
 
     scheduler = schedule_tweets(llm)
 
-    logger.info("Приложение успешно запущено и работает.")
+    logger.info("The application has been successfully launched and is working..")
 
     try:
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
         scheduler.shutdown()
-        logger.info("Бот остановлен")
+        logger.info("Bot was stopped")
 
 
 if __name__ == "__main__":
